@@ -1,9 +1,16 @@
-name: Gradle Build and Push to ECR with OIDC
+name: Build, Push and Terraform Deploy
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      tf_action:
+        description: "Terraform Action (apply/destroy)"
+        required: true
+        default: "apply"
+
 
 env:
   AWS_REGION: ca-central-1
@@ -21,6 +28,14 @@ jobs:
 
     - name: Checkout Repository
       uses: actions/checkout@v4
+
+    - name: Set TF_ACTION
+      run: |
+        if [ "${{ github.event.inputs.tf_action }}" = "" ]; then
+          echo "TF_ACTION=apply" >> $GITHUB_ENV
+        else
+          echo "TF_ACTION=${{ github.event.inputs.tf_action }}" >> $GITHUB_ENV
+        fi
 
     - name: Setup Java
       uses: actions/setup-java@v4
@@ -65,3 +80,28 @@ jobs:
       run: |
         docker push \
         ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$COMMIT_SHA
+
+    # Install Terraform
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    # Terraform Init
+    - name: Terraform Init
+      working-directory: infra
+      run: terraform init
+
+    # Terraform Apply
+    - name: Terraform Apply
+      working-directory: infra
+      if: env.TF_ACTION == 'apply'
+      run: |
+        terraform plan \
+        -var="image_tag=${{ env.COMMIT_SHA }}" \
+        -out=tfplan
+        terraform apply -auto-approve tfplan
+
+    # Terraform Destroy
+    - name: Terraform Destroy
+      working-directory: infra
+      if: env.TF_ACTION == 'destroy'
+      run: terraform destroy -auto-approve
